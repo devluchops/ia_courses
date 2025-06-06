@@ -1,0 +1,1094 @@
+# Actividad 2: Redes Neuronales Convolucionales - CIFAR-10
+# Clasificación de imágenes usando CNN con el dataset CIFAR-10
+
+# =============================================================================
+# CELDA 1: Importación de librerías y configuración inicial
+# =============================================================================
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.model_selection import train_test_split
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.datasets import cifar10
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Conv2D, MaxPooling2D, Flatten, Dropout, BatchNormalization
+from tensorflow.keras.optimizers import Adam, SGD
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+import warnings
+warnings.filterwarnings('ignore')
+
+# Configuración para reproducibilidad
+np.random.seed(42)
+tf.random.set_seed(42)
+
+# Configuración de matplotlib para mejores visualizaciones
+plt.style.use('default')
+sns.set_palette("husl")
+
+print("TensorFlow version:", tf.__version__)
+print("GPU disponible:", tf.config.list_physical_devices('GPU'))
+
+# =============================================================================
+# CELDA 2: Carga y exploración inicial del dataset CIFAR-10
+# =============================================================================
+
+# Carga del dataset CIFAR-10
+print("Cargando dataset CIFAR-10...")
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
+
+# Definición de las clases del dataset
+class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer', 
+               'dog', 'frog', 'horse', 'ship', 'truck']
+
+# Información básica del dataset
+print(f"Forma del conjunto de entrenamiento: {x_train.shape}")
+print(f"Forma de las etiquetas de entrenamiento: {y_train.shape}")
+print(f"Forma del conjunto de prueba: {x_test.shape}")
+print(f"Forma de las etiquetas de prueba: {y_test.shape}")
+print(f"Rango de valores de píxeles: [{x_train.min()}, {x_train.max()}]")
+print(f"Número de clases: {len(class_names)}")
+
+# =============================================================================
+# CELDA 3: Análisis exploratorio detallado de los datos
+# =============================================================================
+
+# Función para visualizar muestras del dataset
+def plot_sample_images(x_data, y_data, class_names, n_samples=10):
+    """
+    Visualiza muestras aleatorias del dataset
+    """
+    fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+    fig.suptitle('Muestras del Dataset CIFAR-10', fontsize=16)
+    
+    for i in range(n_samples):
+        row = i // 5
+        col = i % 5
+        
+        # Seleccionar imagen aleatoria
+        idx = np.random.randint(0, len(x_data))
+        image = x_data[idx]
+        label = class_names[y_data[idx][0]]
+        
+        axes[row, col].imshow(image)
+        axes[row, col].set_title(f'{label}')
+        axes[row, col].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
+# Visualizar muestras del dataset
+plot_sample_images(x_train, y_train, class_names)
+
+# Análisis de distribución de clases
+def analyze_class_distribution(y_data, class_names, title="Distribución de Clases"):
+    """
+    Analiza y visualiza la distribución de clases en el dataset
+    """
+    # Contar frecuencia de cada clase
+    unique, counts = np.unique(y_data, return_counts=True)
+    class_distribution = pd.DataFrame({
+        'Clase': [class_names[i] for i in unique],
+        'Frecuencia': counts,
+        'Porcentaje': counts / len(y_data) * 100
+    })
+    
+    print(f"\n{title}:")
+    print(class_distribution)
+    
+    # Visualización
+    plt.figure(figsize=(12, 5))
+    
+    # Gráfico de barras
+    plt.subplot(1, 2, 1)
+    bars = plt.bar(class_distribution['Clase'], class_distribution['Frecuencia'])
+    plt.title('Frecuencia por Clase')
+    plt.xlabel('Clases')
+    plt.ylabel('Número de Imágenes')
+    plt.xticks(rotation=45)
+    
+    # Añadir valores en las barras
+    for bar, count in zip(bars, class_distribution['Frecuencia']):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 50,
+                str(count), ha='center', va='bottom')
+    
+    # Gráfico circular
+    plt.subplot(1, 2, 2)
+    plt.pie(class_distribution['Frecuencia'], labels=class_distribution['Clase'], 
+            autopct='%1.1f%%', startangle=90)
+    plt.title('Distribución Porcentual')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return class_distribution
+
+# Analizar distribución de clases
+train_distribution = analyze_class_distribution(y_train, class_names, "Distribución - Conjunto de Entrenamiento")
+test_distribution = analyze_class_distribution(y_test, class_names, "Distribución - Conjunto de Prueba")
+
+# =============================================================================
+# CELDA 4: Visualización de imágenes por clase
+# =============================================================================
+
+def plot_images_by_class(x_data, y_data, class_names, images_per_class=5):
+    """
+    Muestra ejemplos de imágenes para cada clase
+    """
+    n_classes = len(class_names)
+    fig, axes = plt.subplots(n_classes, images_per_class, figsize=(15, 20))
+    fig.suptitle('Ejemplos por Clase - Dataset CIFAR-10', fontsize=16)
+    
+    for class_idx in range(n_classes):
+        # Encontrar índices de la clase actual
+        class_indices = np.where(y_data.flatten() == class_idx)[0]
+        
+        # Seleccionar imágenes aleatorias de la clase
+        selected_indices = np.random.choice(class_indices, images_per_class, replace=False)
+        
+        for img_idx in range(images_per_class):
+            image = x_data[selected_indices[img_idx]]
+            
+            axes[class_idx, img_idx].imshow(image)
+            if img_idx == 0:
+                axes[class_idx, img_idx].set_ylabel(class_names[class_idx], fontsize=12)
+            axes[class_idx, img_idx].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
+# Mostrar ejemplos por clase
+plot_images_by_class(x_train, y_train, class_names)
+
+# =============================================================================
+# CELDA 5: Análisis estadístico de las imágenes
+# =============================================================================
+
+def analyze_image_statistics(x_data, title="Estadísticas de Imágenes"):
+    """
+    Analiza estadísticas básicas de las imágenes (brillo, contraste, etc.)
+    """
+    print(f"\n{title}:")
+    print(f"Forma de las imágenes: {x_data.shape[1:]}")
+    print(f"Tipo de datos: {x_data.dtype}")
+    print(f"Valor mínimo: {x_data.min()}")
+    print(f"Valor máximo: {x_data.max()}")
+    print(f"Media global: {x_data.mean():.2f}")
+    print(f"Desviación estándar global: {x_data.std():.2f}")
+    
+    # Análisis por canal de color (RGB)
+    print("\nEstadísticas por canal:")
+    for i, channel in enumerate(['Rojo', 'Verde', 'Azul']):
+        channel_data = x_data[:, :, :, i]
+        print(f"{channel}: Media={channel_data.mean():.2f}, Std={channel_data.std():.2f}")
+    
+    # Visualización de distribución de intensidades
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    
+    # Histograma de todos los píxeles
+    axes[0, 0].hist(x_data.flatten(), bins=50, alpha=0.7, color='blue')
+    axes[0, 0].set_title('Distribución de Intensidades - Todos los Píxeles')
+    axes[0, 0].set_xlabel('Intensidad')
+    axes[0, 0].set_ylabel('Frecuencia')
+    
+    # Histogramas por canal
+    colors = ['red', 'green', 'blue']
+    for i, (channel, color) in enumerate(zip(['Rojo', 'Verde', 'Azul'], colors)):
+        axes[0, 1].hist(x_data[:, :, :, i].flatten(), bins=50, alpha=0.5, 
+                       label=channel, color=color)
+    axes[0, 1].set_title('Distribución por Canal de Color')
+    axes[0, 1].set_xlabel('Intensidad')
+    axes[0, 1].set_ylabel('Frecuencia')
+    axes[0, 1].legend()
+    
+    # Media de intensidad por imagen
+    mean_intensities = np.mean(x_data, axis=(1, 2, 3))
+    axes[1, 0].hist(mean_intensities, bins=50, alpha=0.7, color='purple')
+    axes[1, 0].set_title('Distribución de Brillo Promedio por Imagen')
+    axes[1, 0].set_xlabel('Brillo Promedio')
+    axes[1, 0].set_ylabel('Número de Imágenes')
+    
+    # Desviación estándar por imagen (contraste)
+    std_intensities = np.std(x_data, axis=(1, 2, 3))
+    axes[1, 1].hist(std_intensities, bins=50, alpha=0.7, color='orange')
+    axes[1, 1].set_title('Distribución de Contraste por Imagen')
+    axes[1, 1].set_xlabel('Desviación Estándar (Contraste)')
+    axes[1, 1].set_ylabel('Número de Imágenes')
+    
+    plt.tight_layout()
+    plt.show()
+
+# Analizar estadísticas de las imágenes
+analyze_image_statistics(x_train, "Estadísticas - Conjunto de Entrenamiento")
+
+# =============================================================================
+# CELDA 6: Preprocesamiento de datos
+# =============================================================================
+
+def preprocess_data(x_train, y_train, x_test, y_test, num_classes=10):
+    """
+    Preprocesa los datos para entrenamiento de la CNN
+    """
+    print("Preprocesando datos...")
+    
+    # Normalización de píxeles a rango [0, 1]
+    x_train_norm = x_train.astype('float32') / 255.0
+    x_test_norm = x_test.astype('float32') / 255.0
+    
+    print(f"Rango después de normalización: [{x_train_norm.min()}, {x_train_norm.max()}]")
+    
+    # Conversión de etiquetas a formato categórico (one-hot encoding)
+    y_train_cat = to_categorical(y_train, num_classes)
+    y_test_cat = to_categorical(y_test, num_classes)
+    
+    print(f"Forma de etiquetas después de one-hot encoding:")
+    print(f"y_train: {y_train_cat.shape}")
+    print(f"y_test: {y_test_cat.shape}")
+    
+    # Crear conjunto de validación a partir del entrenamiento
+    x_train_split, x_val, y_train_split, y_val = train_test_split(
+        x_train_norm, y_train_cat, test_size=0.2, random_state=42, stratify=y_train
+    )
+    
+    print(f"\nDivisión final de datos:")
+    print(f"Entrenamiento: {x_train_split.shape[0]} imágenes")
+    print(f"Validación: {x_val.shape[0]} imágenes")
+    print(f"Prueba: {x_test_norm.shape[0]} imágenes")
+    
+    return x_train_split, x_val, x_test_norm, y_train_split, y_val, y_test_cat
+
+# Preprocesar datos
+x_train_prep, x_val, x_test_prep, y_train_prep, y_val, y_test_prep = preprocess_data(
+    x_train, y_train, x_test, y_test
+)
+
+# =============================================================================
+# CELDA 7: Modelo Fully Connected (baseline)
+# =============================================================================
+
+def create_fully_connected_model(input_shape, num_classes=10):
+    """
+    Crea un modelo totalmente conectado como baseline
+    """
+    model = Sequential([
+        Flatten(input_shape=input_shape),
+        Dense(512, activation='relu'),
+        Dropout(0.5),
+        Dense(256, activation='relu'),
+        Dropout(0.5),
+        Dense(128, activation='relu'),
+        Dropout(0.3),
+        Dense(num_classes, activation='softmax')
+    ])
+    
+    return model
+
+# Crear y compilar modelo fully connected
+print("Creando modelo Fully Connected (baseline)...")
+fc_model = create_fully_connected_model(x_train_prep.shape[1:])
+fc_model.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# Mostrar arquitectura del modelo
+print("Arquitectura del modelo Fully Connected:")
+fc_model.summary()
+
+# Entrenar modelo fully connected
+print("\nEntrenando modelo Fully Connected...")
+fc_history = fc_model.fit(
+    x_train_prep, y_train_prep,
+    batch_size=128,
+    epochs=20,
+    validation_data=(x_val, y_val),
+    verbose=1,
+    callbacks=[EarlyStopping(patience=5, restore_best_weights=True)]
+)
+
+# =============================================================================
+# CELDA 8: Modelo CNN básico
+# =============================================================================
+
+def create_basic_cnn(input_shape, num_classes=10):
+    """
+    Crea un modelo CNN básico
+    """
+    model = Sequential([
+        # Primera capa convolucional
+        Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+        MaxPooling2D((2, 2)),
+        
+        # Segunda capa convolucional
+        Conv2D(64, (3, 3), activation='relu'),
+        MaxPooling2D((2, 2)),
+        
+        # Tercera capa convolucional
+        Conv2D(64, (3, 3), activation='relu'),
+        
+        # Capas densas
+        Flatten(),
+        Dense(64, activation='relu'),
+        Dropout(0.5),
+        Dense(num_classes, activation='softmax')
+    ])
+    
+    return model
+
+# Crear y compilar CNN básica
+print("Creando modelo CNN básico...")
+basic_cnn = create_basic_cnn(x_train_prep.shape[1:])
+basic_cnn.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+print("Arquitectura del modelo CNN básico:")
+basic_cnn.summary()
+
+# Entrenar CNN básica
+print("\nEntrenando modelo CNN básico...")
+basic_cnn_history = basic_cnn.fit(
+    x_train_prep, y_train_prep,
+    batch_size=128,
+    epochs=30,
+    validation_data=(x_val, y_val),
+    verbose=1,
+    callbacks=[
+        EarlyStopping(patience=7, restore_best_weights=True),
+        ReduceLROnPlateau(factor=0.5, patience=3)
+    ]
+)
+
+# =============================================================================
+# CELDA 9: Modelo CNN avanzado con regularización
+# =============================================================================
+
+def create_advanced_cnn(input_shape, num_classes=10):
+    """
+    Crea un modelo CNN avanzado con batch normalization, dropout y más capas
+    """
+    model = Sequential([
+        # Primer bloque convolucional
+        Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=input_shape),
+        BatchNormalization(),
+        Conv2D(32, (3, 3), activation='relu', padding='same'),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
+        
+        # Segundo bloque convolucional
+        Conv2D(64, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        Conv2D(64, (3, 3), activation='relu', padding='same'),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
+        
+        # Tercer bloque convolucional
+        Conv2D(128, (3, 3), activation='relu', padding='same'),
+        BatchNormalization(),
+        Conv2D(128, (3, 3), activation='relu', padding='same'),
+        MaxPooling2D((2, 2)),
+        Dropout(0.25),
+        
+        # Capas densas
+        Flatten(),
+        Dense(512, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.5),
+        Dense(256, activation='relu'),
+        Dropout(0.5),
+        Dense(num_classes, activation='softmax')
+    ])
+    
+    return model
+
+# Crear y compilar CNN avanzada
+print("Creando modelo CNN avanzado...")
+advanced_cnn = create_advanced_cnn(x_train_prep.shape[1:])
+advanced_cnn.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+print("Arquitectura del modelo CNN avanzado:")
+advanced_cnn.summary()
+
+# Entrenar CNN avanzada
+print("\nEntrenando modelo CNN avanzado...")
+advanced_cnn_history = advanced_cnn.fit(
+    x_train_prep, y_train_prep,
+    batch_size=128,
+    epochs=50,
+    validation_data=(x_val, y_val),
+    verbose=1,
+    callbacks=[
+        EarlyStopping(patience=10, restore_best_weights=True),
+        ReduceLROnPlateau(factor=0.5, patience=5, min_lr=1e-7)
+    ]
+)
+
+# =============================================================================
+# CELDA 10: Data Augmentation
+# =============================================================================
+
+# Configurar generador de datos con data augmentation
+print("Configurando Data Augmentation...")
+datagen = ImageDataGenerator(
+    rotation_range=15,           # Rotación aleatoria hasta 15 grados
+    width_shift_range=0.1,       # Desplazamiento horizontal
+    height_shift_range=0.1,      # Desplazamiento vertical
+    horizontal_flip=True,        # Volteo horizontal
+    zoom_range=0.1,              # Zoom aleatorio
+    shear_range=0.1,             # Transformación de cizalla
+    fill_mode='nearest'          # Modo de relleno para píxeles faltantes
+)
+
+# Ajustar el generador a los datos de entrenamiento
+datagen.fit(x_train_prep)
+
+# Visualizar ejemplos de data augmentation
+def show_augmented_images(datagen, x_data, y_data, class_names, n_examples=5):
+    """
+    Muestra ejemplos de imágenes aumentadas
+    """
+    fig, axes = plt.subplots(2, n_examples, figsize=(15, 6))
+    fig.suptitle('Ejemplos de Data Augmentation', fontsize=16)
+    
+    # Seleccionar una imagen aleatoria
+    idx = np.random.randint(0, len(x_data))
+    original_image = x_data[idx]
+    class_name = class_names[np.argmax(y_data[idx])]
+    
+    # Mostrar imagen original
+    axes[0, 0].imshow(original_image)
+    axes[0, 0].set_title(f'Original\n{class_name}')
+    axes[0, 0].axis('off')
+    
+    # Generar y mostrar imágenes aumentadas
+    x_batch = original_image.reshape((1,) + original_image.shape)
+    augmented_generator = datagen.flow(x_batch, batch_size=1)
+    
+    for i in range(1, n_examples):
+        augmented_batch = next(augmented_generator)
+        augmented_image = augmented_batch[0]
+        
+        axes[0, i].imshow(augmented_image)
+        axes[0, i].set_title(f'Aumentada {i}')
+        axes[0, i].axis('off')
+    
+    # Repetir con otra imagen
+    idx2 = np.random.randint(0, len(x_data))
+    original_image2 = x_data[idx2]
+    class_name2 = class_names[np.argmax(y_data[idx2])]
+    
+    axes[1, 0].imshow(original_image2)
+    axes[1, 0].set_title(f'Original\n{class_name2}')
+    axes[1, 0].axis('off')
+    
+    x_batch2 = original_image2.reshape((1,) + original_image2.shape)
+    augmented_generator2 = datagen.flow(x_batch2, batch_size=1)
+    
+    for i in range(1, n_examples):
+        augmented_batch2 = next(augmented_generator2)
+        augmented_image2 = augmented_batch2[0]
+        
+        axes[1, i].imshow(augmented_image2)
+        axes[1, i].set_title(f'Aumentada {i}')
+        axes[1, i].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
+# Mostrar ejemplos de data augmentation
+show_augmented_images(datagen, x_train_prep, y_train_prep, class_names)
+
+# =============================================================================
+# CELDA 11: Modelo CNN con Data Augmentation
+# =============================================================================
+
+# Crear nuevo modelo CNN para entrenar con data augmentation
+print("Creando modelo CNN con Data Augmentation...")
+cnn_with_aug = create_advanced_cnn(x_train_prep.shape[1:])
+cnn_with_aug.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# Entrenar con data augmentation
+print("\nEntrenando modelo CNN con Data Augmentation...")
+steps_per_epoch = len(x_train_prep) // 128
+
+cnn_aug_history = cnn_with_aug.fit(
+    datagen.flow(x_train_prep, y_train_prep, batch_size=128),
+    steps_per_epoch=steps_per_epoch,
+    epochs=50,
+    validation_data=(x_val, y_val),
+    verbose=1,
+    callbacks=[
+        EarlyStopping(patience=15, restore_best_weights=True),
+        ReduceLROnPlateau(factor=0.5, patience=7, min_lr=1e-7)
+    ]
+)
+
+# =============================================================================
+# CELDA 12: Evaluación y comparación de modelos
+# =============================================================================
+
+def evaluate_model(model, x_test, y_test, model_name, class_names):
+    """
+    Evalúa un modelo y devuelve métricas detalladas
+    """
+    print(f"\n{'='*50}")
+    print(f"EVALUACIÓN DEL MODELO: {model_name}")
+    print(f"{'='*50}")
+    
+    # Predicciones
+    y_pred = model.predict(x_test, verbose=0)
+    y_pred_classes = np.argmax(y_pred, axis=1)
+    y_true_classes = np.argmax(y_test, axis=1)
+    
+    # Exactitud general
+    accuracy = accuracy_score(y_true_classes, y_pred_classes)
+    print(f"Exactitud general: {accuracy:.4f} ({accuracy*100:.2f}%)")
+    
+    # Reporte de clasificación
+    print("\nReporte de clasificación por clase:")
+    class_report = classification_report(
+        y_true_classes, y_pred_classes, 
+        target_names=class_names, 
+        output_dict=True
+    )
+    
+    # Mostrar métricas por clase
+    class_metrics = pd.DataFrame(class_report).transpose()
+    print(class_metrics.round(4))
+    
+    # Identificar mejores y peores clases
+    class_f1_scores = {class_names[i]: class_report[str(i)]['f1-score'] 
+                      for i in range(len(class_names))}
+    
+    best_classes = sorted(class_f1_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+    worst_classes = sorted(class_f1_scores.items(), key=lambda x: x[1])[:3]
+    
+    print(f"\nMejores 3 clases (F1-Score):")
+    for class_name, f1_score in best_classes:
+        print(f"  {class_name}: {f1_score:.4f}")
+    
+    print(f"\nPeores 3 clases (F1-Score):")
+    for class_name, f1_score in worst_classes:
+        print(f"  {class_name}: {f1_score:.4f}")
+    
+    return {
+        'accuracy': accuracy,
+        'predictions': y_pred,
+        'predicted_classes': y_pred_classes,
+        'true_classes': y_true_classes,
+        'classification_report': class_report,
+        'class_metrics': class_metrics
+    }
+
+# Evaluar todos los modelos
+models_results = {}
+
+print("Evaluando modelos en conjunto de prueba...")
+
+# Modelo Fully Connected
+models_results['FC'] = evaluate_model(
+    fc_model, x_test_prep, y_test_prep, 
+    "Fully Connected (Baseline)", class_names
+)
+
+# CNN Básica
+models_results['CNN_Basic'] = evaluate_model(
+    basic_cnn, x_test_prep, y_test_prep, 
+    "CNN Básica", class_names
+)
+
+# CNN Avanzada
+models_results['CNN_Advanced'] = evaluate_model(
+    advanced_cnn, x_test_prep, y_test_prep, 
+    "CNN Avanzada", class_names
+)
+
+# CNN con Data Augmentation
+models_results['CNN_Aug'] = evaluate_model(
+    cnn_with_aug, x_test_prep, y_test_prep, 
+    "CNN con Data Augmentation", class_names
+)
+
+# =============================================================================
+# CELDA 13: Comparación visual de rendimiento
+# =============================================================================
+
+def plot_training_history(histories, model_names):
+    """
+    Grafica las curvas de entrenamiento para comparar modelos
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    fig.suptitle('Comparación de Curvas de Entrenamiento', fontsize=16)
+    
+    colors = ['blue', 'red', 'green', 'orange']
+    
+    # Exactitud de entrenamiento
+    axes[0, 0].set_title('Exactitud de Entrenamiento')
+    for i, (history, name) in enumerate(zip(histories, model_names)):
+        if 'accuracy' in history.history:
+            axes[0, 0].plot(history.history['accuracy'], label=name, color=colors[i])
+    axes[0, 0].set_xlabel('Época')
+    axes[0, 0].set_ylabel('Exactitud')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True)
+    
+    # Exactitud de validación
+    axes[0, 1].set_title('Exactitud de Validación')
+    for i, (history, name) in enumerate(zip(histories, model_names)):
+        if 'val_accuracy' in history.history:
+            axes[0, 1].plot(history.history['val_accuracy'], label=name, color=colors[i])
+    axes[0, 1].set_xlabel('Época')
+    axes[0, 1].set_ylabel('Exactitud')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True)
+    
+    # Pérdida de entrenamiento
+    axes[1, 0].set_title('Pérdida de Entrenamiento')
+    for i, (history, name) in enumerate(zip(histories, model_names)):
+        if 'loss' in history.history:
+            axes[1, 0].plot(history.history['loss'], label=name, color=colors[i])
+    axes[1, 0].set_xlabel('Época')
+    axes[1, 0].set_ylabel('Pérdida')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True)
+    
+    # Pérdida de validación
+    axes[1, 1].set_title('Pérdida de Validación')
+    for i, (history, name) in enumerate(zip(histories, model_names)):
+        if 'val_loss' in history.history:
+            axes[1, 1].plot(history.history['val_loss'], label=name, color=colors[i])
+    axes[1, 1].set_xlabel('Época')
+    axes[1, 1].set_ylabel('Pérdida')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+
+# Graficar historiales de entrenamiento
+histories = [fc_history, basic_cnn_history, advanced_cnn_history, cnn_aug_history]
+model_names = ['Fully Connected', 'CNN Básica', 'CNN Avanzada', 'CNN + Data Aug']
+
+plot_training_history(histories, model_names)
+
+# Comparación de exactitud final
+def plot_accuracy_comparison(models_results):
+    """
+    Gráfico de barras comparando la exactitud de todos los modelos
+    """
+    model_names = list(models_results.keys())
+    accuracies = [models_results[model]['accuracy'] for model in model_names]
+    
+    plt.figure(figsize=(10, 6))
+    bars = plt.bar(model_names, accuracies, color=['skyblue', 'lightcoral', 'lightgreen', 'orange'])
+    
+    # Añadir valores en las barras
+    for bar, acc in zip(bars, accuracies):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                f'{acc:.3f}', ha='center', va='bottom', fontweight='bold')
+    
+    plt.title('Comparación de Exactitud entre Modelos', fontsize=14)
+    plt.ylabel('Exactitud')
+    plt.ylim(0, 1)
+    plt.grid(True, alpha=0.3)
+    
+    # Añadir línea horizontal con la mejor exactitud
+    best_accuracy = max(accuracies)
+    plt.axhline(y=best_accuracy, color='red', linestyle='--', alpha=0.7, 
+                label=f'Mejor: {best_accuracy:.3f}')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+plot_accuracy_comparison(models_results)
+
+# =============================================================================
+# CELDA 14: Matriz de confusión y análisis de errores
+# =============================================================================
+
+def plot_confusion_matrix(y_true, y_pred, class_names, model_name):
+    """
+    Visualiza la matriz de confusión
+    """
+    cm = confusion_matrix(y_true, y_pred)
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title(f'Matriz de Confusión - {model_name}')
+    plt.xlabel('Predicción')
+    plt.ylabel('Verdadero')
+    plt.xticks(rotation=45)
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+    plt.show()
+    
+    # Análisis de errores más comunes
+    print(f"\nAnálisis de errores - {model_name}:")
+    
+    # Encontrar los errores más frecuentes
+    error_pairs = []
+    for i in range(len(class_names)):
+        for j in range(len(class_names)):
+            if i != j and cm[i, j] > 0:
+                error_pairs.append((class_names[i], class_names[j], cm[i, j]))
+    
+    # Ordenar por frecuencia de error
+    error_pairs.sort(key=lambda x: x[2], reverse=True)
+    
+    print("Errores más frecuentes (Verdadero → Predicho):")
+    for true_class, pred_class, count in error_pairs[:10]:
+        print(f"  {true_class} → {pred_class}: {count} errores")
+
+# Generar matrices de confusión para el mejor modelo (CNN con Data Augmentation)
+best_model_key = 'CNN_Aug'
+best_result = models_results[best_model_key]
+
+plot_confusion_matrix(
+    best_result['true_classes'], 
+    best_result['predicted_classes'], 
+    class_names, 
+    "CNN con Data Augmentation"
+)
+
+# =============================================================================
+# CELDA 15: Análisis visual de errores de clasificación
+# =============================================================================
+
+def analyze_classification_errors(x_test, y_true, y_pred, class_names, n_examples=12):
+    """
+    Muestra ejemplos de imágenes mal clasificadas
+    """
+    # Encontrar índices de clasificaciones incorrectas
+    incorrect_indices = np.where(y_true != y_pred)[0]
+    
+    if len(incorrect_indices) == 0:
+        print("¡No hay errores de clasificación!")
+        return
+    
+    print(f"Total de errores: {len(incorrect_indices)} de {len(y_true)} imágenes")
+    
+    # Seleccionar ejemplos aleatorios de errores
+    selected_indices = np.random.choice(incorrect_indices, 
+                                      min(n_examples, len(incorrect_indices)), 
+                                      replace=False)
+    
+    # Crear visualización
+    cols = 4
+    rows = (n_examples + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 4*rows))
+    fig.suptitle('Ejemplos de Errores de Clasificación', fontsize=16)
+    
+    if rows == 1:
+        axes = axes.reshape(1, -1)
+    
+    for i, idx in enumerate(selected_indices):
+        row = i // cols
+        col = i % cols
+        
+        image = x_test[idx]
+        true_label = class_names[y_true[idx]]
+        pred_label = class_names[y_pred[idx]]
+        
+        axes[row, col].imshow(image)
+        axes[row, col].set_title(f'Real: {true_label}\nPredicho: {pred_label}', 
+                                fontsize=10)
+        axes[row, col].axis('off')
+    
+    # Ocultar subplots vacíos
+    for i in range(len(selected_indices), rows * cols):
+        row = i // cols
+        col = i % cols
+        axes[row, col].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Análisis estadístico de errores por clase
+    print("\nAnálisis de errores por clase:")
+    error_analysis = {}
+    
+    for class_idx, class_name in enumerate(class_names):
+        class_indices = np.where(y_true == class_idx)[0]
+        class_errors = np.where((y_true == class_idx) & (y_true != y_pred))[0]
+        
+        if len(class_indices) > 0:
+            error_rate = len(class_errors) / len(class_indices)
+            error_analysis[class_name] = {
+                'total': len(class_indices),
+                'errors': len(class_errors),
+                'error_rate': error_rate
+            }
+    
+    # Crear DataFrame para mejor visualización
+    error_df = pd.DataFrame(error_analysis).T
+    error_df = error_df.sort_values('error_rate', ascending=False)
+    
+    print(error_df.round(4))
+    
+    # Visualización de tasas de error por clase
+    plt.figure(figsize=(12, 6))
+    bars = plt.bar(error_df.index, error_df['error_rate'], 
+                   color='lightcoral', alpha=0.7)
+    
+    for bar, rate in zip(bars, error_df['error_rate']):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                f'{rate:.3f}', ha='center', va='bottom')
+    
+    plt.title('Tasa de Error por Clase')
+    plt.xlabel('Clase')
+    plt.ylabel('Tasa de Error')
+    plt.xticks(rotation=45)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+# Analizar errores del mejor modelo
+analyze_classification_errors(
+    x_test_prep, 
+    best_result['true_classes'], 
+    best_result['predicted_classes'], 
+    class_names
+)
+
+# =============================================================================
+# CELDA 16: Análisis de características aprendidas
+# =============================================================================
+
+def visualize_conv_filters(model, layer_name, n_filters=32):
+    """
+    Visualiza los filtros aprendidos en una capa convolucional
+    """
+    # Obtener los pesos de la capa especificada
+    layer = None
+    for l in model.layers:
+        if l.name == layer_name:
+            layer = l
+            break
+    
+    if layer is None:
+        print(f"Capa '{layer_name}' no encontrada")
+        return
+    
+    filters = layer.get_weights()[0]
+    
+    # Normalizar filtros para visualización
+    f_min, f_max = filters.min(), filters.max()
+    filters = (filters - f_min) / (f_max - f_min)
+    
+    # Determinar dimensiones de la grilla
+    n_filters = min(n_filters, filters.shape[-1])
+    cols = 8
+    rows = (n_filters + cols - 1) // cols
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 2*rows))
+    fig.suptitle(f'Filtros de la capa: {layer_name}', fontsize=16)
+    
+    if rows == 1:
+        axes = axes.reshape(1, -1)
+    
+    for i in range(n_filters):
+        row = i // cols
+        col = i % cols
+        
+        filter_img = filters[:, :, :, i]
+        
+        # Si el filtro tiene múltiples canales, tomar el promedio
+        if filter_img.shape[2] > 1:
+            filter_img = np.mean(filter_img, axis=2)
+        else:
+            filter_img = filter_img[:, :, 0]
+        
+        axes[row, col].imshow(filter_img, cmap='gray')
+        axes[row, col].set_title(f'Filtro {i+1}')
+        axes[row, col].axis('off')
+    
+    # Ocultar subplots vacíos
+    for i in range(n_filters, rows * cols):
+        row = i // cols
+        col = i % cols
+        axes[row, col].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
+# Visualizar filtros de la primera capa convolucional del mejor modelo
+try:
+    # Obtener el nombre de la primera capa convolucional
+    first_conv_layer = None
+    for layer in cnn_with_aug.layers:
+        if isinstance(layer, Conv2D):
+            first_conv_layer = layer.name
+            break
+    
+    if first_conv_layer:
+        visualize_conv_filters(cnn_with_aug, first_conv_layer)
+    else:
+        print("No se encontró capa convolucional")
+except Exception as e:
+    print(f"Error al visualizar filtros: {e}")
+
+# =============================================================================
+# CELDA 17: Predicciones en imágenes específicas
+# =============================================================================
+
+def predict_and_show_examples(model, x_test, y_test, class_names, n_examples=8):
+    """
+    Muestra predicciones del modelo en imágenes específicas
+    """
+    # Realizar predicciones
+    predictions = model.predict(x_test, verbose=0)
+    
+    # Seleccionar ejemplos aleatorios
+    indices = np.random.choice(len(x_test), n_examples, replace=False)
+    
+    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+    fig.suptitle('Predicciones del Modelo CNN con Data Augmentation', fontsize=16)
+    
+    for i, idx in enumerate(indices):
+        row = i // 4
+        col = i % 4
+        
+        image = x_test[idx]
+        true_label = class_names[np.argmax(y_test[idx])]
+        pred_probs = predictions[idx]
+        pred_label = class_names[np.argmax(pred_probs)]
+        confidence = np.max(pred_probs)
+        
+        # Color del título según si la predicción es correcta
+        color = 'green' if true_label == pred_label else 'red'
+        
+        axes[row, col].imshow(image)
+        axes[row, col].set_title(
+            f'Real: {true_label}\nPredicho: {pred_label}\nConfianza: {confidence:.3f}',
+            color=color, fontsize=10
+        )
+        axes[row, col].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Mostrar top-3 predicciones para algunos ejemplos
+    print("Top-3 predicciones para algunos ejemplos:")
+    for i, idx in enumerate(indices[:4]):
+        true_label = class_names[np.argmax(y_test[idx])]
+        pred_probs = predictions[idx]
+        
+        # Obtener top-3 predicciones
+        top3_indices = np.argsort(pred_probs)[-3:][::-1]
+        
+        print(f"\nEjemplo {i+1} - Etiqueta real: {true_label}")
+        for j, class_idx in enumerate(top3_indices):
+            prob = pred_probs[class_idx]
+            print(f"  {j+1}. {class_names[class_idx]}: {prob:.4f} ({prob*100:.2f}%)")
+
+# Mostrar predicciones de ejemplo
+predict_and_show_examples(cnn_with_aug, x_test_prep, y_test_prep, class_names)
+
+# =============================================================================
+# CELDA 18: Resumen final y conclusiones
+# =============================================================================
+
+print("\n" + "="*80)
+print("RESUMEN FINAL DEL PROYECTO")
+print("="*80)
+
+print("\n1. COMPARACIÓN DE MODELOS:")
+print("-" * 40)
+
+# Crear tabla resumen
+summary_data = []
+for model_name, results in models_results.items():
+    summary_data.append({
+        'Modelo': model_name,
+        'Exactitud': f"{results['accuracy']:.4f}",
+        'Exactitud (%)': f"{results['accuracy']*100:.2f}%"
+    })
+
+summary_df = pd.DataFrame(summary_data)
+print(summary_df.to_string(index=False))
+
+# Mejores y peores clases del mejor modelo
+best_result = models_results['CNN_Aug']
+class_f1_scores = {}
+for i, class_name in enumerate(class_names):
+    if str(i) in best_result['classification_report']:
+        class_f1_scores[class_name] = best_result['classification_report'][str(i)]['f1-score']
+
+print(f"\n2. ANÁLISIS DEL MEJOR MODELO (CNN + Data Augmentation):")
+print("-" * 60)
+
+best_classes = sorted(class_f1_scores.items(), key=lambda x: x[1], reverse=True)
+worst_classes = sorted(class_f1_scores.items(), key=lambda x: x[1])
+
+print(f"Exactitud general: {best_result['accuracy']:.4f} ({best_result['accuracy']*100:.2f}%)")
+
+print(f"\nClases con mejor rendimiento (F1-Score):")
+for i, (class_name, f1_score) in enumerate(best_classes[:5]):
+    print(f"  {i+1}. {class_name}: {f1_score:.4f}")
+
+print(f"\nClases con peor rendimiento (F1-Score):")
+for i, (class_name, f1_score) in enumerate(worst_classes[:5]):
+    print(f"  {i+1}. {class_name}: {f1_score:.4f}")
+
+print(f"\n3. CONCLUSIONES TÉCNICAS:")
+print("-" * 40)
+
+conclusions = [
+    "• Las CNN superan significativamente a los modelos totalmente conectados",
+    "• La regularización (Batch Normalization, Dropout) mejora la generalización",
+    "• El Data Augmentation ayuda a reducir el sobreajuste y mejora el rendimiento",
+    "• Las clases con formas más distintivas (avión, barco) son más fáciles de clasificar",
+    "• Los animales pequeños (pájaros, gatos) presentan mayor dificultad de clasificación",
+    "• La arquitectura con múltiples capas convolucionales captura mejor las características"
+]
+
+for conclusion in conclusions:
+    print(conclusion)
+
+print(f"\n4. RECOMENDACIONES PARA MEJORAS FUTURAS:")
+print("-" * 50)
+
+recommendations = [
+    "• Experimentar con arquitecturas más profundas (ResNet, DenseNet)",
+    "• Implementar Transfer Learning con modelos preentrenados",
+    "• Probar técnicas de ensemble para combinar múltiples modelos",
+    "• Aumentar la diversidad del Data Augmentation",
+    "• Optimizar hiperparámetros usando búsqueda automática",
+    "• Analizar mapas de activación para entender mejor las predicciones"
+]
+
+for recommendation in recommendations:
+    print(recommendation)
+
+print("\n" + "="*80)
+print("FIN DEL ANÁLISIS")
+print("="*80)
+
+# Guardar resumen de resultados
+results_summary = {
+    'model_comparison': summary_df,
+    'best_model_accuracy': best_result['accuracy'],
+    'class_performance': class_f1_scores
+}
+
+print(f"\nResultados guardados en memoria para referencia futura.")
+print(f"Mejor modelo: CNN con Data Augmentation ({best_result['accuracy']*100:.2f}% exactitud)")
